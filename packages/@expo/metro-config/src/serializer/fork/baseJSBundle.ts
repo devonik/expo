@@ -20,7 +20,7 @@ import countLines from '@expo/metro/metro/lib/countLines';
 import getAppendScripts from '@expo/metro/metro/lib/getAppendScripts';
 import { isJscSafeUrl, toNormalUrl } from 'jsc-safe-url';
 
-import type { ChunkingStrategy } from '../serializerAssets';
+import type { AsyncModulePaths, ChunkingStrategy } from '../serializerAssets';
 import { processModules } from './processModules';
 
 export type ModuleMap = [number, string][];
@@ -33,11 +33,13 @@ export type Bundle = {
     // Module ID
     string,
     // Split paths { moduleId: URL }
-    Record<string, string>
+    AsyncModulePaths
   >;
 };
 
 export type ExpoSerializerOptions = SerializerOptions & {
+  /** Selected fork emission strategy, separate from the nested request. Defaults to legacy. */
+  chunkingStrategy?: ChunkingStrategy;
   serializerOptions?: {
     baseUrl?: string;
     skipWrapping?: boolean;
@@ -139,6 +141,7 @@ export function baseJSBundleWithDependencies(
     splitChunks: options.splitChunks,
     skipWrapping: options.skipWrapping,
     computedAsyncModulePaths: options.computedAsyncModulePaths,
+    unstable_getAsyncDependencyPath: options.unstable_getAsyncDependencyPath,
   };
 
   // Do not prepend polyfills or the require runtime when only modules are requested
@@ -218,7 +221,7 @@ export function baseJSBundleWithDependencies(
       (
         mods.filter(
           ([id, code]) => typeof code !== 'number' && Object.keys(code?.paths ?? {}).length
-        ) as [string, { src: string; paths: Record<string, string> }][]
+        ) as [string, { src: string; paths: AsyncModulePaths }][]
       ).map(([id, code]) => [id, code.paths])
     ),
   };

@@ -748,14 +748,19 @@ describe('serializes', () => {
   });
 
   it(`bundle splits a weak import`, async () => {
-    const artifacts = await serializeSplitAsync({
-      'index.js': `
+    // Preserve historical output from an intentionally manufactured weak-only node.
+    // Real Metro resolves its ID but never adds it to the graph.
+    const artifacts = await serializeSplitAsync(
+      {
+        'index.js': `
           require.resolveWeak('./foo')
         `,
-      'foo.js': `
+        'foo.js': `
           export const foo = 'foo';
         `,
-    });
+      },
+      { legacyTraverseWeakDependencies: true }
+    );
 
     expect(artifacts.map((art: SerialAsset) => art.filename)).toMatchInlineSnapshot(`
       [

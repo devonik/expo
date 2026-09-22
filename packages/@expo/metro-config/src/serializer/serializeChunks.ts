@@ -6,12 +6,7 @@
  */
 import type { MetroConfig, AssetData } from '@expo/metro/metro';
 import type { ConfigT, SerializerConfigT } from '@expo/metro/metro-config';
-import type {
-  MixedOutput,
-  Module,
-  ReadOnlyGraph,
-  SerializerOptions,
-} from '@expo/metro/metro/DeltaBundler/types';
+import type { MixedOutput, Module, ReadOnlyGraph } from '@expo/metro/metro/DeltaBundler/types';
 import bundleToString from '@expo/metro/metro/lib/bundleToString';
 import { isResolvedDependency } from '@expo/metro/metro/lib/isResolvedDependency';
 import assert from 'assert';
@@ -81,6 +76,11 @@ export type SerializeChunkOptions = {
   chunkingStrategy: ChunkingStrategy;
 } & SerializerConfigOptions;
 
+type ChunkOptions = ExpoSerializerOptions & {
+  chunkingStrategy?: ChunkingStrategy;
+  isLazyBundle: boolean;
+};
+
 export async function graphToSerialAssetsAsync(
   config: MetroConfig,
   serializeChunkOptions: SerializeChunkOptions,
@@ -89,7 +89,9 @@ export async function graphToSerialAssetsAsync(
   artifacts: SerialAsset[] | null;
   assets: AssetData[];
 }> {
-  const [entryFile, preModules, graph, options] = props;
+  const [entryFile, preModules, graph, metroOptions] = props;
+  // Capture the incoming graph mode before any serialization pass enables paths.
+  const options: ChunkOptions = { ...metroOptions, isLazyBundle: metroOptions.includeAsyncPaths };
 
   const cssDeps = getCssSerialAssets<MixedOutput>(graph.dependencies, {
     entryFile,
@@ -193,7 +195,7 @@ export class Chunk {
     public name: string,
     public entries: Set<Module<MixedOutput>>,
     public graph: ReadOnlyGraph<MixedOutput>,
-    public options: ExpoSerializerOptions,
+    public options: ChunkOptions,
     public isAsync: boolean = false,
     public isVendor: boolean = false,
     public isEntry: boolean = false
@@ -288,7 +290,7 @@ export class Chunk {
     }
     const targets = new Set<Chunk>();
     this._asyncTargets = targets;
-    if (this.options.includeAsyncPaths) {
+    if (this.options.isLazyBundle) {
       return targets;
     }
     for (const module of this.deps) {
@@ -310,7 +312,7 @@ export class Chunk {
   ) {
     const baseUrl = getBaseUrlOption(this.graph, this.options);
     // Only calculate production paths when all chunks are being exported.
-    if (this.options.includeAsyncPaths) {
+    if (this.options.isLazyBundle) {
       return null;
     }
     const computedAsyncModulePaths: Record<string, string> = {};
@@ -568,10 +570,14 @@ export class Chunk {
             Object.entries(jsAsset.metadata.paths).map(([key, value]) => [
               key,
               Object.fromEntries(
-                Object.entries(value).map(([key, value]) => [
-                  key,
-                  value ? value.replace(/\.js$/, '.hbc') : value,
-                ])
+                Object.entries(value).map(([key, value]) => {
+                  // BitSet arrays are web-only. Keep the legacy Hermes conversion scalar.
+                  assert(
+                    value == null || typeof value === 'string',
+                    'Hermes async paths must remain scalar.'
+                  );
+                  return [key, value ? value.replace(/\.js$/, '.hbc') : value];
+                })
               ),
             ])
           );
@@ -679,7 +685,7 @@ function gatherChunks(
   settings: ChunkSettings,
   preModules: readonly Module[],
   graph: ReadOnlyGraph,
-  options: SerializerOptions,
+  options: ChunkOptions,
   isAsync: boolean = false,
   isEntry: boolean = false
 ): Set<Chunk> {
@@ -735,7 +741,7 @@ function gatherChunks(
         // Workers require standalone bundles even when ordinary chunk splitting is disabled.
         (isWorker || splitChunks)
       ) {
-        if (isWorker && options.includeAsyncPaths) {
+        if (isWorker && options.isLazyBundle) {
           continue;
         }
         const asyncChunks = gatherChunks(
@@ -792,7 +798,7 @@ function removeEntryDepsFromAsyncChunks(entryChunk: Chunk, chunks: Set<Chunk>): 
 function extractCommonChunk(
   chunks: Set<Chunk>,
   graph: ReadOnlyGraph,
-  options: SerializerOptions
+  options: ChunkOptions
 ): Chunk | undefined {
   const toCompare = [...chunks.values()].filter((chunk) => !chunk.sealed);
   const commonDependencies = new Set<Module<MixedOutput>>();
@@ -850,7 +856,7 @@ function createRuntimeChunk(
   entryChunk: Chunk,
   chunks: Set<Chunk>,
   graph: ReadOnlyGraph,
-  options: SerializerOptions
+  options: ChunkOptions
 ): void {
   const runtimeChunk = new Chunk(
     '/__expo-metro-runtime.js',
