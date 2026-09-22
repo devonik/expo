@@ -8,6 +8,11 @@ import path from 'path';
 
 import { fileNameFromContents } from './getCssDeps';
 
+/** Convert an artifact identifier to a loadable URL without changing its stored filename. */
+export function getChunkUrl(baseUrl: string, filename: string): string {
+  return baseUrl.replace(/\/+$/, '') + '/' + filename.replace(/^\/+/, '');
+}
+
 export function getExportPathForDependencyWithOptions(
   dependencyPath: string,
   { platform, src, serverRoot }: { platform: string; serverRoot: string; src: string }

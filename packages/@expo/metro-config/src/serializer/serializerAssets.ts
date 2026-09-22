@@ -12,6 +12,10 @@ export type SerialAsset = {
   type: 'css-external' | 'css' | 'js' | 'map' | 'json';
 
   metadata: {
+    /** Emission provenance, including worker files; this does not imply page ownership. */
+    chunkingStrategy?: ChunkingStrategy;
+    /** Absolute semantic page entry paths; runtime/shared/worker files use an empty array. */
+    entryPaths?: string[];
     hmrId?: string;
     /** Media query baked into a `css-external` `<link>` tag (e.g. `screen and (min-width: 900px)`). */
     media?: string;

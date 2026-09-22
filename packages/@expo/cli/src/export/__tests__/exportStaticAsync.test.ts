@@ -1,7 +1,11 @@
+import type { SerialAsset } from '@expo/metro-config/src/serializer/serializerAssets';
 import { getMockConfig as getMockConfigUntyped } from 'expo-router/build/testing-library/mock-config';
 
 import { resolveStaticHeaders } from '../../serve/static';
-import type { ExpoRouterRuntimeManifest } from '../../start/server/metro/MetroBundlerDevServer';
+import type {
+  ExpoRouterRuntimeManifest,
+  MetroBundlerDevServer,
+} from '../../start/server/metro/MetroBundlerDevServer';
 import {
   deriveStaticLoaderHeaders,
   getExactPathNamedRegex,
@@ -10,6 +14,7 @@ import {
   getFilesToExportFromServerAsync,
   SERVER_LOADER_DEFAULT_HEADER_RULE,
   buildLoaderPageHeaderRules,
+  exportFromServerAsync,
 } from '../exportStaticAsync';
 
 // `getMockConfig` returns a structurally-close subset of the runtime manifest (it omits the
@@ -25,10 +30,106 @@ jest.mock('expo-constants', () => ({}));
 jest.mock('react-native', () => ({ Platform: { select: jest.fn((obj) => obj.web) } }));
 jest.mock('expo-linking', () => ({}), { virtual: true });
 jest.mock('expo-modules-core', () => ({}));
+jest.mock('../favicon', () => ({ generateFaviconAssetAsync: jest.fn(async () => null) }));
 
 function Route() {
   return null;
 }
+
+it('exports complete BitSet SSR route lists with URL prefixes and semantic entry matching', async () => {
+  const js = (filename: string, metadata: SerialAsset['metadata']): SerialAsset => ({
+    filename,
+    originFilename: filename,
+    type: 'js',
+    source: '',
+    metadata: {
+      chunkingStrategy: 'bitset',
+      entryPaths: [],
+      modulePaths: [],
+      requires: [],
+      isAsync: true,
+      ...metadata,
+    },
+  });
+  const manifest = getMockConfig({ './nested/page.tsx': Route }, false);
+  // The lightweight Router helper omits leaf screens; export consumes the full runtime shape.
+  const addLeafScreens = (screens: ExpoRouterRuntimeManifest['screens']) => {
+    for (const [key, value] of Object.entries(screens)) {
+      if (typeof value !== 'string') {
+        if (!value._route && !value.screens) {
+          delete screens[key];
+          continue;
+        }
+        value.screens ??= {};
+        addLeafScreens(value.screens);
+      }
+    }
+  };
+  addLeafScreens(manifest.screens);
+  const route = getHtmlFiles({ manifest })[0]!.route;
+  route.entryPoints = ['/app/_layout.tsx', '/app/nested/page.tsx'];
+  const serverManifest = {
+    htmlRoutes: [
+      {
+        file: route.contextKey,
+        page: '/nested/page',
+        namedRegex: '^/nested/page/?$',
+        routeKeys: {},
+      },
+    ],
+    apiRoutes: [],
+    notFoundRoutes: [],
+    redirects: [],
+    rewrites: [],
+  };
+  const artifacts = [
+    js('entry.js', { isAsync: false, requires: ['runtime.js'] }),
+    js('page.js', { entryPaths: ['/app/nested/page.tsx'], requires: ['runtime.js', 'shared.js'] }),
+    js('layout.js', { entryPaths: ['/app/_layout.tsx'], requires: ['runtime.js', 'shared.js'] }),
+    js('shared.js', { modulePaths: ['/app/_layout.tsx'], requires: ['runtime.js'] }),
+    js('unrelated.js', {}),
+    js('worker.js', {}),
+    js('runtime.js', { isAsync: false }),
+  ];
+  const server = {
+    isReactServerComponentsEnabled: false,
+    getStaticResourcesAsync: jest.fn(async () => ({ artifacts })),
+    getStaticRenderFunctionAsync: jest.fn(async () => ({
+      manifest,
+      serverManifest,
+      renderAsync: jest.fn(),
+      executeLoaderAsync: jest.fn(),
+    })),
+    exportExpoRouterApiRoutesAsync: jest.fn(async () => ({
+      manifest: serverManifest,
+      files: new Map(),
+    })),
+    exportExpoRouterRenderModuleAsync: jest.fn(async () => {}),
+  } as unknown as MetroBundlerDevServer;
+  const files = await exportFromServerAsync('/app', server, {
+    exp: { name: 'test', slug: 'test', web: { output: 'server' } },
+    outputDir: '/dist',
+    baseUrl: '/sub/',
+    exportServer: true,
+    includeSourceMaps: false,
+    routerRoot: '.',
+    mode: 'production',
+    minify: false,
+    clear: false,
+    reactCompiler: false,
+    isExporting: true,
+  });
+  const output = JSON.parse(files.get('_expo/routes.json')!.contents as string);
+  expect(output.chunkingStrategy).toBe('bitset');
+  expect(output.assets.js).toEqual(['/sub/runtime.js', '/sub/entry.js']);
+  expect(output.htmlRoutes[0].assets.js).toEqual([
+    '/sub/runtime.js',
+    '/sub/shared.js',
+    '/sub/layout.js',
+    '/sub/page.js',
+    '/sub/entry.js',
+  ]);
+});
 
 describe(getPathVariations, () => {
   it(`should get path variations`, () => {

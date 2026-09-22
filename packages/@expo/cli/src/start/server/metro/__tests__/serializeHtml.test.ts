@@ -11,6 +11,121 @@ describe(serialAssetsToStaticContentAssets, () => {
   const js = (filename: string, metadata: any): SerialAsset =>
     ({ filename, originFilename: filename, type: 'js', metadata, source: '' }) as any;
 
+  const bitsetJs = (filename: string, metadata: SerialAsset['metadata'] = {}) =>
+    js(filename, {
+      chunkingStrategy: 'bitset',
+      entryPaths: [],
+      modulePaths: [],
+      requires: [],
+      isAsync: true,
+      ...metadata,
+    });
+
+  function bitsetAssets() {
+    return [
+      bitsetJs('dist/entry.js', {
+        isAsync: false,
+        entryPaths: ['/entry.js', '/app/inlined.tsx'],
+        requires: ['dist/runtime.js'],
+      }),
+      bitsetJs('dist/page.js', {
+        entryPaths: ['/app/nested/page.tsx'],
+        requires: ['dist/runtime.js', 'dist/shared.js'],
+      }),
+      bitsetJs('dist/unrelated.js'),
+      bitsetJs('dist/layout.js', {
+        entryPaths: ['/app/_layout.tsx'],
+        requires: ['dist/runtime.js', 'dist/shared.js'],
+      }),
+      bitsetJs('dist/worker.js'),
+      bitsetJs('dist/shared.js', {
+        modulePaths: ['/app/_layout.tsx'],
+        requires: ['dist/runtime.js'],
+      }),
+      bitsetJs('dist/runtime.js', { isAsync: false }),
+    ];
+  }
+
+  it('expands semantic roots before the initial bundle without re-sorting prerequisites', () => {
+    const result = serialAssetsToStaticContentAssets(bitsetAssets(), {
+      isExporting: true,
+      baseUrl: '/sub/',
+      route: {
+        contextKey: './nested/page.tsx',
+        entryPoints: ['/app/_layout.tsx', '/app/nested/page.tsx'],
+      } as any,
+    });
+    expect(result.js).toEqual([
+      '/sub/dist/runtime.js',
+      '/sub/dist/shared.js',
+      '/sub/dist/layout.js',
+      '/sub/dist/page.js',
+      '/sub/dist/entry.js',
+    ]);
+    expect(new URL(result.js[1]!, 'https://example.com/sub/nested/page').pathname).toBe(
+      '/sub/dist/shared.js'
+    );
+  });
+
+  it('does not preload unrelated shared chunks, workers, or aliases owned by the initial bundle', () => {
+    const assets = bitsetAssets();
+    for (const route of [undefined, { entryPoints: ['/app/inlined.tsx'] } as any]) {
+      expect(
+        serialAssetsToStaticContentAssets(assets, { isExporting: true, baseUrl: '', route }).js
+      ).toEqual(['/dist/runtime.js', '/dist/entry.js']);
+    }
+  });
+
+  it('includes another route facade when it physically owns a requested entry module', () => {
+    const assets = [
+      bitsetJs('entry.js', { isAsync: false, requires: ['runtime.js'] }),
+      bitsetJs('b.js', { entryPaths: ['/app/b.tsx'], requires: ['runtime.js', 'a.js'] }),
+      bitsetJs('a.js', {
+        entryPaths: ['/app/a.tsx'],
+        modulePaths: ['/app/a.tsx', '/app/b.tsx'],
+        requires: ['runtime.js'],
+      }),
+      bitsetJs('runtime.js', { isAsync: false }),
+    ];
+    expect(
+      serialAssetsToStaticContentAssets(assets, {
+        isExporting: true,
+        baseUrl: '',
+        route: { entryPoints: ['/app/b.tsx'] } as any,
+      }).js
+    ).toEqual(['/runtime.js', '/a.js', '/b.js', '/entry.js']);
+  });
+
+  it('rejects incomplete or mixed provenance instead of using legacy matching', () => {
+    const invalid = bitsetJs('bad.js', { entryPaths: undefined });
+    expect(() =>
+      serialAssetsToStaticContentAssets([invalid], { isExporting: true, baseUrl: '' })
+    ).toThrow(/entryPaths/);
+    expect(() =>
+      serialAssetsToStaticContentAssets([bitsetJs('new.js'), js('legacy.js', {})], {
+        isExporting: true,
+        baseUrl: '',
+      })
+    ).toThrow(/strategy/);
+  });
+
+  it('walks only the selected roots, but still rejects missing requirements and cycles', () => {
+    const a = js('a.js', { requires: ['shared.js'] });
+    const shared = js('shared.js', { requires: [] });
+    const unrelated = js('unrelated.js', { requires: ['missing.js'] });
+    expect(assetsRequiresSort([a, unrelated, shared], [a]).map((a) => a.filename)).toEqual([
+      'shared.js',
+      'a.js',
+    ]);
+    expect(assetsRequiresSort([a, unrelated, shared], [])).toEqual([]);
+    expect(() => assetsRequiresSort([a, unrelated, shared], [unrelated])).toThrow(
+      'Asset not found: missing.js'
+    );
+    expect(() => assetsRequiresSort([a, js('shared.js', { requires: ['a.js'] })], [a])).toThrow(
+      /Circular dependencies/
+    );
+  });
+
   it('builds linked CSS and dependency-ordered, route-scoped JS when exporting', () => {
     const resources: SerialAsset[] = [
       {

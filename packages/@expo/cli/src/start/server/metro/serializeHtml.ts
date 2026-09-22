@@ -1,3 +1,4 @@
+import { getChunkUrl } from '@expo/metro-config/build/serializer/exportPath';
 import type { SerialAsset } from '@expo/metro-config/build/serializer/serializerAssets';
 import {
   injectAssetsIntoHtml,
@@ -90,6 +91,16 @@ export function serialAssetsToStaticContentAssets(
     return { css, js: [bundleUrl], favicon };
   }
 
+  if (assets.some((asset) => asset.type === 'js' && asset.metadata.chunkingStrategy === 'bitset')) {
+    return {
+      css,
+      js: getBitSetAssetsForRoute(assets, route?.entryPoints).map((asset) =>
+        getChunkUrl(baseUrl, asset.filename)
+      ),
+      favicon,
+    };
+  }
+
   let orderedJsAssets = assetsRequiresSort(assets.filter((asset) => asset.type === 'js'));
 
   if (route?.entryPoints && Array.isArray(route.entryPoints)) {
@@ -150,14 +161,51 @@ export function sortMatchedAssetsByEntryPoints(
 
   return matchedAssets.sort(
     (a, b) =>
-      getEntryPointIndex(a.metadata.modulePaths) - getEntryPointIndex(b.metadata.modulePaths)
+      getEntryPointIndex(
+        a.metadata.chunkingStrategy === 'bitset' ? a.metadata.entryPaths : a.metadata.modulePaths
+      ) -
+      getEntryPointIndex(
+        b.metadata.chunkingStrategy === 'bitset' ? b.metadata.entryPaths : b.metadata.modulePaths
+      )
   );
+}
+
+/** Complete page script order, shared by static HTML and ordinary SSR route manifests. */
+export function getBitSetAssetsForRoute(
+  assets: SerialAsset[],
+  entryPoints: readonly string[] = []
+): SerialAsset[] {
+  const js = assets.filter((asset) => asset.type === 'js');
+  for (const asset of js) {
+    if (asset.metadata.chunkingStrategy !== 'bitset') {
+      throw new Error(
+        `Mixed chunking strategy for ${asset.filename}. Serialize the page with one strategy.`
+      );
+    }
+    if (!Array.isArray(asset.metadata.entryPaths) || !Array.isArray(asset.metadata.requires)) {
+      throw new Error(
+        `Missing entryPaths or requires for BitSet asset ${asset.filename}. Regenerate the export with canonical chunk metadata.`
+      );
+    }
+  }
+  // Match semantic facades only. Shared owners and sealed workers have no page entryPaths;
+  // aliases on the initial file must not move application execution ahead of route registration.
+  const matched = js.filter(
+    (asset) =>
+      asset.metadata.isAsync &&
+      asset.metadata.entryPaths!.some((entry) => entryPoints.includes(entry))
+  );
+  const roots = sortMatchedAssetsByEntryPoints(matched, [...entryPoints]);
+  return assetsRequiresSort(js, [...roots, ...js.filter((asset) => !asset.metadata.isAsync)]);
 }
 
 /**
  * Sorts assets based on the requires tree. DFS order.
  */
-export function assetsRequiresSort(assets: SerialAsset[]): SerialAsset[] {
+export function assetsRequiresSort(
+  assets: SerialAsset[],
+  roots: SerialAsset[] = assets
+): SerialAsset[] {
   const lookup = new Map<string, SerialAsset>();
   const visited = new Set();
   const visiting = new Set();
@@ -188,7 +236,7 @@ export function assetsRequiresSort(assets: SerialAsset[]): SerialAsset[] {
     result.push(module);
   }
 
-  assets.forEach((a) => {
+  roots.forEach((a) => {
     if (!visited.has(a.filename)) {
       visit(a.filename);
     }
