@@ -15,6 +15,142 @@ import {
   withSerializerPlugins,
 } from '../withExpoSerializers';
 
+describe('BitSet chunk emission', () => {
+  async function emit(fs: Record<string, string>) {
+    const [entry, premodules, graph, options] = await microBundle({
+      fs,
+      preModulesFs: { runtime: '/* runtime */' },
+      options: { platform: 'web', dev: false, output: 'static', splitChunks: true },
+    });
+    return chunkSerializer.serializeBitSetChunksAsync(
+      {},
+      { includeSourceMaps: false, splitChunks: true, chunkingStrategy: 'bitset' },
+      entry,
+      premodules,
+      graph,
+      options
+    );
+  }
+
+  it('emits separate AB and BC shared owners and complete async arrays', async () => {
+    const assets = await emit({
+      'index.js': `import('./a'); import('./b'); import('./c');`,
+      'a.js': `import './d';`,
+      'b.js': `import './d'; import './e';`,
+      'c.js': `import './e';`,
+      'd.js': `console.log('d');`,
+      'e.js': `console.log('e');`,
+    });
+    const entry = assets[0]!;
+    expect(entry.metadata.entryPaths).toEqual(['/app/index.js']);
+    const d = assets.find((asset) => asset.metadata.modulePaths?.includes('/app/d.js'))!;
+    const e = assets.find((asset) => asset.metadata.modulePaths?.includes('/app/e.js'))!;
+    expect(d).not.toBe(e);
+    expect(d.filename).toContain('__shared-');
+    expect(e.filename).toContain('__shared-');
+    expect(d.metadata.entryPaths).toEqual([]);
+    const b = assets.find((asset) => asset.metadata.entryPaths?.includes('/app/b.js'))!;
+    expect(b.metadata.requires).toEqual(expect.arrayContaining([d.filename, e.filename]));
+    const paths = Object.values(entry.metadata.paths!).flatMap(Object.values);
+    expect(paths).toContainEqual(
+      expect.arrayContaining(['/' + b.filename, '/' + d.filename, '/' + e.filename])
+    );
+    expect(assets.every((asset) => asset.metadata.chunkingStrategy === 'bitset')).toBe(true);
+    const modulePaths = assets.flatMap((asset) => asset.metadata.modulePaths ?? []);
+    expect(new Set(modulePaths).size).toBe(modulePaths.length);
+  });
+
+  it('keeps a semantic facade when its module belongs to an earlier route', async () => {
+    const assets = await emit({
+      'index.js': `import('./a');`,
+      'a.js': `import './b'; export const load = () => import('./b');`,
+      'b.js': `console.log('b');`,
+    });
+    const a = assets.find((asset) => asset.metadata.entryPaths?.includes('/app/a.js'))!;
+    const b = assets.find((asset) => asset.metadata.entryPaths?.includes('/app/b.js'))!;
+    expect(assets).toHaveLength(4); // initial, runtime, A, empty B facade
+    expect(a.metadata.modulePaths).toContain('/app/b.js');
+    expect(b.metadata.modulePaths).toEqual([]);
+    expect(b.metadata.requires).toContain(a.filename);
+    expect(Object.values(a.metadata.paths!).flatMap(Object.values)).toContainEqual([
+      '/' + b.filename,
+    ]);
+  });
+
+  it('skips fully initial-owned facades and records their aliases', async () => {
+    const assets = await emit({
+      'index.js': `import './a'; import('./a');`,
+      'a.js': `console.log('a');`,
+    });
+    expect(assets).toHaveLength(1);
+    expect(assets[0]!.metadata.entryPaths).toEqual(['/app/a.js', '/app/index.js']);
+    expect(assets[0]!.metadata.paths).toEqual({});
+  });
+
+  it('keeps worker closures isolated and their URLs scalar', async () => {
+    const assets = await emit({
+      'index.js': `import './shared'; import('./a'); require.unstable_resolveWorker('./worker');`,
+      'a.js': `console.log('a');`,
+      'worker.js': `import './shared'; require.unstable_resolveWorker('./nested');`,
+      'nested.js': `import './shared';`,
+      'shared.js': `console.log('shared');`,
+    });
+    const worker = assets.find((asset) => asset.originFilename === 'worker.js')!;
+    const nested = assets.find((asset) => asset.originFilename === 'nested.js')!;
+    expect(worker.metadata.modulePaths).toContain('/app/shared.js');
+    expect(nested.metadata.modulePaths).toContain('/app/shared.js');
+    expect(worker.metadata.entryPaths).toEqual([]);
+    expect(worker.metadata.requires).toEqual([]);
+    expect(worker.source).toContain('"/app/runtime"');
+    expect(Object.values(assets[0]!.metadata.paths!).flatMap(Object.values)).toContain(
+      '/' + worker.filename
+    );
+    expect(Object.values(worker.metadata.paths!).flatMap(Object.values)).toEqual([
+      '/' + nested.filename,
+    ]);
+  });
+
+  it('emits acyclic requirements for circular dynamic imports', async () => {
+    const assets = await emit({
+      'index.js': `import('./a');`,
+      'a.js': `import './shared'; export const load = () => import('./b');`,
+      'b.js': `import './shared'; export const load = () => import('./a');`,
+      'shared.js': `console.log('shared');`,
+    });
+    function visit(filename: string, ancestors: string[] = []) {
+      expect(ancestors).not.toContain(filename);
+      const asset = assets.find((asset) => asset.filename === filename)!;
+      expect(asset).toBeDefined();
+      for (const required of asset.metadata.requires ?? [])
+        visit(required, [...ancestors, filename]);
+    }
+    for (const asset of assets) visit(asset.filename);
+    const a = assets.find((asset) => asset.metadata.entryPaths?.includes('/app/a.js'))!;
+    const b = assets.find((asset) => asset.metadata.entryPaths?.includes('/app/b.js'))!;
+    expect(b.metadata.requires).toContain(a.filename);
+    expect(a.metadata.requires).not.toContain(b.filename);
+  });
+
+  it('changes embedded-path hashes when a shared prerequisite changes', async () => {
+    const fs = {
+      'index.js': `import('./a'); import('./b');`,
+      'a.js': `import './shared';`,
+      'b.js': `import './shared';`,
+      'shared.js': `console.log('before');`,
+    };
+    const before = await emit(fs);
+    const after = await emit({ ...fs, 'shared.js': `console.log('after');` });
+    const sharedBefore = before.find((asset) => asset.filename.includes('__shared-'))!;
+    const sharedAfter = after.find((asset) => asset.filename.includes('__shared-'))!;
+    expect(sharedAfter.originFilename).toBe(sharedBefore.originFilename);
+    expect(sharedAfter.filename).not.toBe(sharedBefore.filename);
+    expect(after[0]!.filename).not.toBe(before[0]!.filename);
+    expect(after[0]!.source).toContain(sharedAfter.filename);
+    expect(after[0]!.source).not.toContain(sharedBefore.filename);
+    expect(await emit(fs)).toEqual(before);
+  });
+});
+
 describe('worker compatibility', () => {
   let bundle: Awaited<ReturnType<typeof microBundle>>;
   let chunkSerializerSpy: jest.SpyInstance;
