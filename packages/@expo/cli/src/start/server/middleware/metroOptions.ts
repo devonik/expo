@@ -153,8 +153,19 @@ export function getMetroDirectBundleOptionsForExpoConfig(
     baseUrl: getBaseUrlFromExpoConfig(exp),
     routerRoot: getRouterDirectoryModuleIdWithManifest(projectRoot, exp),
     asyncRoutes: getAsyncRoutesFromExpoConfig(exp, options.mode, options.platform),
-    chunkingStrategy: exp.extra?.router?.unstable_chunking === true ? 'bitset' : 'legacy',
+    ...getChunkingOptionsFromExpoConfig(exp),
   });
+}
+
+export function getChunkingOptionsFromExpoConfig(exp: ExpoConfig) {
+  return {
+    chunkingStrategy:
+      exp.extra?.router?.unstable_chunking === true &&
+      !exp.experiments?.reactServerComponentRoutes &&
+      !exp.experiments?.reactServerFunctions
+        ? 'bitset'
+        : 'legacy',
+  } satisfies Pick<ExpoMetroOptions, 'chunkingStrategy'>;
 }
 
 export function getMetroDirectBundleOptions(options: ExpoMetroOptions) {
