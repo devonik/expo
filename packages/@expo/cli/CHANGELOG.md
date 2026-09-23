@@ -6,6 +6,8 @@
 
 ### 🎉 New features
 
+- Support the Expo Router `unstable_chunking` opt-in for production web app exports, including route-specific HTML and hosting asset dependencies. Native, DOM and RSC exports retain legacy chunking.
+
 ### 🐛 Bug fixes
 
 ### 💡 Others

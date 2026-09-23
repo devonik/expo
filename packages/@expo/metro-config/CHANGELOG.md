@@ -6,6 +6,8 @@
 
 ### 🎉 New features
 
+- Add experimental BigInt-based shared chunk assignment for production web app exports, enabled by the Expo Router `unstable_chunking` plugin option. Opted-in async exports extract a runtime chunk even without shared modules; HTML loads runtime and route prerequisites before the initial entry.
+
 ### 🐛 Bug fixes
 
 ### 💡 Others
