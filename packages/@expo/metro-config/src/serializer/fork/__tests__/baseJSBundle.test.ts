@@ -10,7 +10,6 @@ it('records completion before append scripts without embedding a filename', asyn
   });
   const result = baseJSBundle(entry, preModules, graph, {
     ...options,
-    chunkingStrategy: 'bitset',
     chunkCompletion: true,
     globalPrefix: 'test"prefix',
     runModule: false,

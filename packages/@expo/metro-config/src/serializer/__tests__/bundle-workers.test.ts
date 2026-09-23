@@ -103,6 +103,19 @@ function runWorkerChunkInIsolatedContext(workerChunk: SerialAsset): unknown {
   return context.workerResult;
 }
 
+it('runs an opted-in worker independently of page-owned shared modules', async () => {
+  const [, artifacts] = await serializeShakingAsync(workerAsyncOverlapFiles, {
+    chunkingStrategy: 'bitset',
+    splitChunks: true,
+  });
+  const worker = getChunkContaining(artifacts, '/app/worker.js');
+  expect(worker.metadata.chunkingStrategy).toBe('bitset');
+  expect(worker.metadata.entryPaths).toEqual([]);
+  expect(worker.metadata.requires).toEqual([]);
+  expect(worker.source).not.toContain('__expo_chunk_completion__');
+  expect(runWorkerChunkInIsolatedContext(worker)).toBe('shared-module-value');
+});
+
 it(`supports worker bundle`, async () => {
   // TODO: Add actual support for eliminating code from async imports.
   const [[, , graph], artifacts] = await serializeShakingAsync(

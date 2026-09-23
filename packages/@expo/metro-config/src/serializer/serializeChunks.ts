@@ -82,7 +82,7 @@ type ChunkOptions = ExpoSerializerOptions & {
   chunkingStrategy?: ChunkingStrategy;
 };
 
-/** Materialize the pure plan without activating the public serializer strategy. */
+/** Materialize page ownership while retaining the existing emission machinery. */
 export async function serializeBitSetChunksAsync(
   serializerConfig: Partial<SerializerConfigT>,
   serializeOptions: SerializeChunkOptions,
@@ -246,50 +246,61 @@ export async function graphToSerialAssetsAsync(
     projectRoot: options.projectRoot,
   });
 
-  // TODO(@hassankhan): Use serializeChunkOptions.chunkingStrategy to branch logic here once the BitSet strategy is ready
-  // Create chunks for splitting.
-  const chunks = new Set<Chunk>();
-  const entryChunks = gatherChunks(
-    preModules,
-    chunks,
-    { test: pathToRegex(entryFile) },
-    preModules,
-    graph,
-    options,
-    false,
-    true
-  );
+  let jsAssets: SerialAsset[];
+  if (serializeChunkOptions.chunkingStrategy === 'bitset') {
+    jsAssets = await serializeBitSetChunksAsync(
+      config.serializer ?? {},
+      serializeChunkOptions,
+      entryFile,
+      preModules,
+      graph,
+      options
+    );
+  } else {
+    // Create chunks for splitting.
+    const chunks = new Set<Chunk>();
+    const entryChunks = gatherChunks(
+      preModules,
+      chunks,
+      { test: pathToRegex(entryFile) },
+      preModules,
+      graph,
+      options,
+      false,
+      true
+    );
 
-  // TODO(@kitten): We know that the returned `entryChunks` should only have a single value
-  // with `!isAsync` and matching `.hasAbsolutePath(entryFile)` due to us only starting with
-  // an entry module. This is temporarily implicit and not enforced by an invariant
-  const entryChunk = entryChunks.values().next().value;
-  if (entryChunk) {
-    removeEntryDepsFromAsyncChunks(entryChunk, chunks);
+    // TODO(@kitten): We know that the returned `entryChunks` should only have a single value
+    // with `!isAsync` and matching `.hasAbsolutePath(entryFile)` due to us only starting with
+    // an entry module. This is temporarily implicit and not enforced by an invariant
+    const entryChunk = entryChunks.values().next().value;
+    if (entryChunk) {
+      removeEntryDepsFromAsyncChunks(entryChunk, chunks);
 
-    const commonChunk = extractCommonChunk(chunks, graph, options);
-    if (commonChunk) {
-      entryChunk.requiredChunks.add(commonChunk);
-      chunks.add(commonChunk);
+      const commonChunk = extractCommonChunk(chunks, graph, options);
+      if (commonChunk) {
+        entryChunk.requiredChunks.add(commonChunk);
+        chunks.add(commonChunk);
+      }
+
+      deduplicateAgainstKnownChunks(chunks, entryChunk, commonChunk);
+      removeEmptyChunks(chunks);
+
+      if (commonChunk) {
+        createRuntimeChunk(entryChunk, chunks, graph, options);
+      }
     }
 
-    deduplicateAgainstKnownChunks(chunks, entryChunk, commonChunk);
-    removeEmptyChunks(chunks);
+    // TODO(@kitten): unclear why `isExporting` is hardcoded below
+    const recomputeChunkNames = !!(options as ExpoSerializerOptions).serializerOptions?.exporting;
 
-    if (commonChunk) {
-      createRuntimeChunk(entryChunk, chunks, graph, options);
-    }
+    jsAssets = await serializeChunksAsync(
+      chunks,
+      config.serializer ?? {},
+      serializeChunkOptions,
+      recomputeChunkNames
+    );
   }
-
-  // TODO(@kitten): unclear why `isExporting` is hardcoded below
-  const recomputeChunkNames = !!(options as ExpoSerializerOptions).serializerOptions?.exporting;
-
-  const jsAssets = await serializeChunksAsync(
-    chunks,
-    config.serializer ?? {},
-    serializeChunkOptions,
-    recomputeChunkNames
-  );
 
   // TODO: Can this be anything besides true?
   const isExporting = true;

@@ -13,15 +13,16 @@ import { runExportSideEffects } from './export-side-effects';
 
 runExportSideEffects();
 
-describe('server rendering with async routes', () => {
+describe.each(['legacy', 'bitset'])('server rendering with async routes (%s)', (strategy) => {
   describe.each(
     // NOTE: This test only looks at the exported files, so there's no need for multiple runtimes
     prepareServers([RUNTIME_EXPO_SERVE], {
-      fixtureName: 'static-rendering',
+      fixtureName: strategy === 'bitset' ? 'static-rendering-bitset' : 'static-rendering',
       uniqueOutputKey: 'server-rendering-async',
       export: {
         env: {
           EXPO_USE_STATIC: 'server',
+          E2E_ROUTER_ASYNC: 'true',
         },
       },
       serve: {
@@ -60,7 +61,7 @@ describe('server rendering with async routes', () => {
 
       expect(jsFilenames).toEqual([
         '__expo-metro-runtime-<HASH>.js',
-        '__common-<HASH>.js',
+        ...(strategy === 'legacy' ? ['__common-<HASH>.js'] : []),
         'entry-<HASH>.js',
       ]);
     });
@@ -82,7 +83,18 @@ describe('server rendering with async routes', () => {
         });
 
         const routeName = path.basename(route.page);
-        expect(jsFilenames).toEqual(['_layout-<HASH>.js', `${routeName}-<HASH>.js`]);
+        if (strategy === 'legacy') {
+          expect(jsFilenames).toEqual(['_layout-<HASH>.js', `${routeName}-<HASH>.js`]);
+        } else {
+          expect(routesJson.chunkingStrategy).toBe('bitset');
+          expect(jsFilenames[0]).toBe('__expo-metro-runtime-<HASH>.js');
+          expect(jsFilenames.at(-1)).toBe('entry-<HASH>.js');
+          expect(jsFilenames).toEqual(
+            expect.arrayContaining(['_layout-<HASH>.js', `${routeName}-<HASH>.js`])
+          );
+          expect(jsFilenames.some((filename) => filename.startsWith('__shared-'))).toBe(true);
+          expect(new Set(jsFilenames).size).toBe(jsFilenames.length);
+        }
       }
     });
   });

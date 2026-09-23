@@ -35,6 +35,7 @@
     "export:server-rendering-async": "E2E_ROUTER_SRC=static-rendering E2E_ROUTER_ASYNC=true EXPO_USE_STATIC=server expo export -p web",
     "start:static-rendering": "E2E_ROUTER_SRC=static-rendering expo start",
     "export:static-rendering": "E2E_ROUTER_SRC=static-rendering expo export -p web",
+    "export:bitset": "E2E_ROUTER_SRC=static-rendering-bitset E2E_ROUTER_ASYNC=true expo export -p web --output-dir dist-bitset",
     "start:server-rendering": "E2E_ROUTER_SRC=static-rendering EXPO_USE_STATIC=server expo start",
     "export:server-rendering": "E2E_ROUTER_SRC=static-rendering EXPO_USE_STATIC=server expo export -p web",
     "start:headers": "E2E_ROUTER_SRC=server-headers E2E_ROUTER_HEADERS_PREDEFINED=true EXPO_USE_STATIC=server expo start",

@@ -38,8 +38,6 @@ export type Bundle = {
 };
 
 export type ExpoSerializerOptions = SerializerOptions & {
-  /** Selected fork emission strategy, separate from the nested request. Defaults to legacy. */
-  chunkingStrategy?: ChunkingStrategy;
   /** Register successful script completion for ordinary BitSet async/shared files. */
   chunkCompletion?: boolean;
   serializerOptions?: {
@@ -181,12 +179,7 @@ export function baseJSBundleWithDependencies(
       options.platform === 'web' ? undefined : !options.dev ? undefined : options.sourceUrl,
   }) as Module[];
 
-  if (
-    options.chunkCompletion &&
-    options.chunkingStrategy === 'bitset' &&
-    options.platform === 'web' &&
-    !options.dev
-  ) {
+  if (options.chunkCompletion && options.platform === 'web' && !options.dev) {
     // No filename literal: this same source participates in intrinsic hashing.
     // Classic HTML and loader-created scripts expose their own absolute URL here.
     const key = JSON.stringify(`${options.globalPrefix ?? ''}__expo_chunk_completion__`);
