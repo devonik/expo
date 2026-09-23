@@ -74,6 +74,17 @@ function asyncRequireImpl<T>(
   // On web, split chunks may already be preloaded via `<script>` tags, so importing
   // synchronously first prevents double-loading the script
   if (process.env.EXPO_OS === 'web') {
+    const payload = paths?.[String(moduleID)];
+    if (Array.isArray(payload)) {
+      const loader = (globalThis as any)[`${__METRO_GLOBAL_PREFIX__ ?? ''}__loadBundleAsync`];
+      if (loader?.isReady?.(payload)) return importAll();
+      const loading = maybeLoadBundle(moduleID, paths);
+      if (loading != null) return loading.then(importAll);
+      throw new Error(
+        `Cannot import module ${moduleName ?? moduleID}: the async bundle loader is unavailable. ` +
+          `Load the initial Expo bundle before importing these chunks: ${payload.join(', ')}`
+      );
+    }
     try {
       return importAll();
     } catch (error) {
