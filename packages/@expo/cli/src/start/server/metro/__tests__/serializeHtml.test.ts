@@ -1,3 +1,4 @@
+import { serializeBitSetChunksAsync } from '@expo/metro-config/build/serializer/serializeChunks';
 import type { SerialAsset } from '@expo/metro-config/src/serializer/serializerAssets';
 
 import {
@@ -8,6 +9,60 @@ import {
 } from '../serializeHtml';
 
 describe(serialAssetsToStaticContentAssets, () => {
+  it('orders actual BitSet output for cross-facade HTML and nested base-path URLs', async () => {
+    // Reuse Metro's source-only fixture helper without including its source tree in CLI's build.
+    const { microBundle } = jest.requireActual(
+      '../../../../../../metro-config/src/serializer/fork/__tests__/mini-metro'
+    );
+    const [entry, premodules, graph, options] = await microBundle({
+      fs: {
+        'index.js': `import('./a');`,
+        'a.js': `import './b'; export const load = () => import('./b');`,
+        'b.js': `console.log('b');`,
+      },
+      preModulesFs: { runtime: 'globalThis.runtime = true;' },
+      options: {
+        platform: 'web',
+        dev: false,
+        output: 'static',
+        splitChunks: true,
+        baseUrl: '/sub/',
+      },
+    });
+    const artifacts = await serializeBitSetChunksAsync(
+      {},
+      {
+        includeSourceMaps: false,
+        splitChunks: true,
+        chunkingStrategy: 'bitset',
+      },
+      entry,
+      premodules,
+      graph,
+      options
+    );
+    const assets = serialAssetsToStaticContentAssets(artifacts, {
+      isExporting: true,
+      baseUrl: '/sub/',
+      route: { entryPoints: ['/app/b.js'] } as any,
+    });
+    const byEntry = (path: string) =>
+      artifacts.find((asset) => asset.metadata.entryPaths?.includes(path))!;
+    const a = byEntry('/app/a.js');
+    const b = byEntry('/app/b.js');
+    const runtime = artifacts.find((asset) => asset.filename.includes('__expo-metro-runtime'))!;
+    expect(assets.js).toEqual(
+      [runtime, a, b, byEntry('/app/index.js')].map((asset) => '/sub/' + asset.filename)
+    );
+    const callbackPaths = Object.values(artifacts[0]!.metadata.paths!)
+      .flatMap(Object.values)
+      .flat();
+    for (const url of callbackPaths) {
+      expect(assets.js).toContain(url);
+      expect(new URL(url, 'https://example.com/sub/nested/page').pathname).toBe(url);
+    }
+  });
+
   const js = (filename: string, metadata: any): SerialAsset =>
     ({ filename, originFilename: filename, type: 'js', metadata, source: '' }) as any;
 

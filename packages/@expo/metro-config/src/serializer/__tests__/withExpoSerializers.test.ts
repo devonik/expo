@@ -149,6 +149,60 @@ describe('BitSet chunk emission', () => {
     expect(after[0]!.source).not.toContain(sharedBefore.filename);
     expect(await emit(fs)).toEqual(before);
   });
+
+  it('retains per-chunk plugin preludes, maps and trailing annotations around completion', async () => {
+    const [entry, premodules, graph, options] = await microBundle({
+      fs: {
+        'index.js': `import('./a'); import('./b');`,
+        'a.js': `import './shared';`,
+        'b.js': `import './shared';`,
+        'shared.js': `console.log('shared');`,
+      },
+      options: {
+        platform: 'web',
+        dev: false,
+        output: 'static',
+        splitChunks: true,
+        sourceMaps: true,
+      },
+    });
+    const plugin = jest.fn(({ premodules }: { premodules: readonly Module[] }) => [
+      ...premodules,
+      createJSVirtualModule('plugin', 'globalThis.pluginRan = true;'),
+    ]);
+    const artifacts = await chunkSerializer.serializeBitSetChunksAsync(
+      {},
+      {
+        includeSourceMaps: true,
+        splitChunks: true,
+        chunkingStrategy: 'bitset',
+        unstable_beforeAssetSerializationPlugins: [plugin],
+      },
+      entry,
+      premodules,
+      graph,
+      options
+    );
+    const js = artifacts.filter((asset) => asset.type === 'js');
+    expect(plugin).toHaveBeenCalledTimes(js.length);
+    for (const asset of js) {
+      expect(asset.source).toContain('globalThis.pluginRan = true;');
+      const sourceMap = artifacts.find(
+        (candidate) => candidate.filename === asset.filename + '.map'
+      )!;
+      expect(JSON.parse(sourceMap.source).version).toBe(3);
+      expect(asset.source).toContain('//# debugId=');
+      if (asset.metadata.isAsync) {
+        const marker = asset.source.indexOf('__expo_chunk_completion__');
+        expect(marker).toBeGreaterThan(asset.source.indexOf('globalThis.pluginRan'));
+        expect(marker).toBeLessThan(asset.source.indexOf('//# sourceMappingURL='));
+        const footer = asset.source.slice(asset.source.lastIndexOf('(function(){'));
+        expect(footer.split('\n')[0]).not.toContain(asset.filename);
+      } else {
+        expect(asset.source).not.toContain('__expo_chunk_completion__');
+      }
+    }
+  });
 });
 
 describe('worker compatibility', () => {
