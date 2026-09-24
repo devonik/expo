@@ -1,10 +1,6 @@
 const path = require('node:path');
 
 const subdomain = process.env.EXPO_TUNNEL_SUBDOMAIN ?? 'expo-e2e-universal-linking';
-// Run the same routes under both strategies, selected through the normal fixture selector.
-const fixture = process.env.E2E_ROUTER_SRC ?? 'static-rendering';
-const useBitSet = fixture === 'static-rendering-bitset';
-const routeFixture = useBitSet ? 'static-rendering' : fixture;
 
 /** @type {import('expo/config').ExpoConfig} */
 module.exports = {
@@ -67,14 +63,14 @@ module.exports = {
     [
       'expo-router',
       {
-        unstable_chunking: useBitSet,
+        unstable_chunking: process.env.E2E_ROUTER_SPLIT_STRATEGY === 'bitset',
         asyncRoutes:
           process.env.E2E_ROUTER_ASYNC === 'true'
             ? true
             : process.env.E2E_ROUTER_ASYNC === 'false'
               ? false
               : process.env.E2E_ROUTER_ASYNC,
-        root: path.join('__e2e__', routeFixture, 'app'),
+        root: path.join('__e2e__', process.env.E2E_ROUTER_SRC ?? 'static-rendering', 'app'),
         origin: 'http://localhost:8081/',
         sitemap:
           process.env.E2E_ROUTER_SITEMAP === 'false' ? false : process.env.E2E_ROUTER_SITEMAP,
@@ -104,5 +100,5 @@ module.exports = {
 };
 
 if (typeof process.env.E2E_ROUTER_SRC === 'string') {
-  process.env.EXPO_PUBLIC_FOLDER = path.join('__e2e__', routeFixture, 'public');
+  process.env.EXPO_PUBLIC_FOLDER = path.join('__e2e__', process.env.E2E_ROUTER_SRC, 'public');
 }

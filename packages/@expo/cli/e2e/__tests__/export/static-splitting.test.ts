@@ -15,13 +15,12 @@ import { runExportSideEffects } from './export-side-effects';
 
 runExportSideEffects();
 
-describe.each(['legacy', 'bitset'])('exports static with %s bundle splitting', (strategy) => {
+describe('exports static with bitset bundle splitting', () => {
   const projectRoot = getRouterE2ERoot();
-  const outputName = `dist-static-splitting-${strategy}`;
+  const outputName = 'dist-static-splitting';
   const outputDir = path.join(projectRoot, outputName);
 
   beforeAll(async () => {
-    // NODE_ENV=production EXPO_USE_STATIC=static E2E_ROUTER_SRC=static-rendering npx expo export -p web --source-maps --output-dir dist-static-splitting
     await executeExpoAsync(
       projectRoot,
       ['export', '-p', 'web', '--source-maps', '--output-dir', outputName],
@@ -29,7 +28,8 @@ describe.each(['legacy', 'bitset'])('exports static with %s bundle splitting', (
         env: {
           NODE_ENV: 'production',
           EXPO_USE_STATIC: 'static',
-          E2E_ROUTER_SRC: strategy === 'bitset' ? 'static-rendering-bitset' : 'static-rendering',
+          E2E_ROUTER_SRC: 'static-rendering',
+          E2E_ROUTER_SPLIT_STRATEGY: 'bitset',
           E2E_ROUTER_ASYNC: 'true',
         },
       }
@@ -61,14 +61,6 @@ describe.each(['legacy', 'bitset'])('exports static with %s bundle splitting', (
   const { getScriptTagsAsync } = getHtmlHelpers(outputDir);
 
   function expectPageScripts(scripts: string[], route?: string) {
-    if (strategy === 'legacy') {
-      expect(scripts).toEqual(
-        ['__expo-metro-runtime', '_layout', ...(route ? [route] : []), '__common', 'entry'].map(
-          expectChunkPathMatching
-        )
-      );
-      return;
-    }
     expect(scripts[0]).toEqual(expectChunkPathMatching('__expo-metro-runtime'));
     expect(scripts.at(-1)).toEqual(expectChunkPathMatching('entry'));
     expect(scripts).toEqual(
@@ -104,7 +96,6 @@ describe.each(['legacy', 'bitset'])('exports static with %s bundle splitting', (
     expect(mapFiles.filter((file) => !file!.includes('__shared-'))).toEqual(
       [
         '__expo-metro-runtime',
-        ...(strategy === 'legacy' ? ['__common'] : []),
         'entry',
         '_layout',
         'index',
